@@ -374,8 +374,8 @@ final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
     }
 
     private func makeTexture(from image: UIImage) -> MTLTexture? {
-        guard let cgImage = image.cgImage else {
-            Log.error("UIImage has no CGImage backing")
+        guard let cgImage = normalizedImage(image) else {
+            Log.error("Failed to normalize image for texture")
             return nil
         }
 
@@ -389,6 +389,18 @@ final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
             Log.error("Failed to create texture: \(String(describing: error))")
             return nil
         }
+    }
+
+    /// Renders UIImage into an upright CGImage so orientation is preserved in Metal.
+    private func normalizedImage(_ image: UIImage) -> CGImage? {
+        if image.imageOrientation == .up, let cg = image.cgImage {
+            return cg
+        }
+        let renderer = UIGraphicsImageRenderer(size: image.size)
+        let rendered = renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: image.size))
+        }
+        return rendered.cgImage
     }
 
     // MARK: - MTKViewDelegate
@@ -517,17 +529,10 @@ final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
         let imageAspect = CGFloat(imgWidth) / CGFloat(imgHeight)
         let viewAspect = viewWidth / viewHeight
 
-        let scaledWidth: CGFloat
-        let scaledHeight: CGFloat
-
-        if imageAspect > viewAspect {
-            scaledWidth = viewWidth
-            scaledHeight = viewWidth / imageAspect
-        } else {
-            scaledHeight = viewHeight
-            scaledWidth = viewHeight * imageAspect
-        }
-
+        // Aspect fill: покрыть весь экран, излишки кадра обрезаются равномерно
+        let scale = max(viewWidth / CGFloat(imgWidth), viewHeight / CGFloat(imgHeight))
+        let scaledWidth = CGFloat(imgWidth) * scale
+        let scaledHeight = CGFloat(imgHeight) * scale
         let originX = (viewWidth - scaledWidth) * 0.5
         let originY = (viewHeight - scaledHeight) * 0.5
 
@@ -812,28 +817,68 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
     // MARK: - UI
 
     private func addSourceButtons() {
-        let libraryButton = UIButton(type: .system)
-        libraryButton.setTitle("Photos", for: .normal)
-        libraryButton.addTarget(self, action: #selector(didTapLibrary), for: .touchUpInside)
+        let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterial))
+        blur.translatesAutoresizingMaskIntoConstraints = false
+        blur.layer.cornerRadius = 16
+        blur.clipsToBounds = true
+        view.addSubview(blur)
 
-        let cameraButton = UIButton(type: .system)
-        cameraButton.setTitle("Camera", for: .normal)
-        cameraButton.addTarget(self, action: #selector(didTapCamera), for: .touchUpInside)
+        let titleLabel = UILabel()
+        titleLabel.text = "Liquid Glass"
+        titleLabel.font = UIFont.preferredFont(forTextStyle: .headline)
+        titleLabel.textColor = .label
 
-        [libraryButton, cameraButton].forEach { button in
-            button.tintColor = .white
-            button.backgroundColor = UIColor.black.withAlphaComponent(0.4)
-            button.layer.cornerRadius = 8
-            view.addSubview(button)
-            button.translatesAutoresizingMaskIntoConstraints = false
-        }
+        let subtitleLabel = UILabel()
+        subtitleLabel.text = "Выберите фото или снимите новое"
+        subtitleLabel.font = UIFont.preferredFont(forTextStyle: .subheadline)
+        subtitleLabel.textColor = .secondaryLabel
+
+        var libraryConfig = UIButton.Configuration.filled()
+        libraryConfig.title = "Photos"
+        libraryConfig.image = UIImage(systemName: "photo.on.rectangle.angled")
+        libraryConfig.baseBackgroundColor = .systemIndigo
+        libraryConfig.baseForegroundColor = .white
+        libraryConfig.cornerStyle = .capsule
+        let libraryButton = UIButton(configuration: libraryConfig, primaryAction: UIAction { [weak self] _ in
+            self?.didTapLibrary()
+        })
+
+        var cameraConfig = UIButton.Configuration.filled()
+        cameraConfig.title = "Camera"
+        cameraConfig.image = UIImage(systemName: "camera.fill")
+        cameraConfig.baseBackgroundColor = .systemMint
+        cameraConfig.baseForegroundColor = .white
+        cameraConfig.cornerStyle = .capsule
+        let cameraButton = UIButton(configuration: cameraConfig, primaryAction: UIAction { [weak self] _ in
+            self?.didTapCamera()
+        })
+
+        let buttonsStack = UIStackView(arrangedSubviews: [libraryButton, cameraButton])
+        buttonsStack.axis = .horizontal
+        buttonsStack.alignment = .fill
+        buttonsStack.distribution = .fillEqually
+        buttonsStack.spacing = 8
+
+        let textStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
+        textStack.axis = .vertical
+        textStack.spacing = 2
+
+        let contentStack = UIStackView(arrangedSubviews: [textStack, buttonsStack])
+        contentStack.axis = .vertical
+        contentStack.spacing = 10
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+
+        blur.contentView.addSubview(contentStack)
 
         NSLayoutConstraint.activate([
-            libraryButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            libraryButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            blur.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            blur.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            blur.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
 
-            cameraButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
-            cameraButton.leadingAnchor.constraint(equalTo: libraryButton.trailingAnchor, constant: 8)
+            contentStack.leadingAnchor.constraint(equalTo: blur.contentView.leadingAnchor, constant: 12),
+            contentStack.trailingAnchor.constraint(equalTo: blur.contentView.trailingAnchor, constant: -12),
+            contentStack.topAnchor.constraint(equalTo: blur.contentView.topAnchor, constant: 10),
+            contentStack.bottomAnchor.constraint(equalTo: blur.contentView.bottomAnchor, constant: -10)
         ])
     }
 
