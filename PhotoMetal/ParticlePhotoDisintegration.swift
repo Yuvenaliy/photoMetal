@@ -11,6 +11,7 @@ import MetalKit
 import simd
 import OSLog
 import SwiftUI
+import RealityKit
 
 // MARK: - Logging
 
@@ -37,6 +38,12 @@ enum ParticleEffectConfig {
 
     /// Animation duration for explode/implode.
     static let animationDuration: Float = 4.0
+
+    /// 3D avatar: максимальное количество точек.
+    static let avatarMaxPoints: Int = 300_000
+
+    /// Минимальная версия iOS для 3D-режима.
+    static let avatarMinIosVersion: Double = 17.0
 
     /// Shared defaults for the brand look.
     static let defaultParameters = ParticleEffectParameters(
@@ -94,6 +101,11 @@ struct GpuParticle {
     var uv: SIMD2<Float>       // Normalized [0,1] UV
 }
 
+struct GpuAvatarPoint {
+    var position3D: SIMD3<Float> // 3D position in model space
+    var color: SIMD3<Float>      // Vertex color
+}
+
 struct Uniforms {
     var viewportSize: SIMD2<Float>
     var time: Float
@@ -104,6 +116,18 @@ struct Uniforms {
     var radialStrength: Float
     var explosionStrength: Float
     var colorInfluence: Float
+}
+
+struct AvatarUniforms {
+    var viewProjectionMatrix: simd_float4x4
+    var time: Float
+    var progress: Float
+    var curlStrength: Float
+    var explosionStrength: Float
+}
+
+protocol ParticleAnimatable: MTKViewDelegate {
+    func toggleDirection()
 }
 
 // MARK: - Shader source with curl-noise
@@ -133,6 +157,26 @@ enum ShaderSource {
     struct VSOut {
         float4 position [[position]];
         float2 uv;
+        float pointSize [[point_size]];
+        float alpha;
+    };
+
+    struct AvatarPoint {
+        float3 position3D;
+        float3 color;
+    };
+
+    struct AvatarUniforms {
+        float4x4 viewProjectionMatrix;
+        float time;
+        float progress;
+        float curlStrength;
+        float explosionStrength;
+    };
+
+    struct AvatarVSOut {
+        float4 position [[position]];
+        float3 color;
         float pointSize [[point_size]];
         float alpha;
     };
@@ -197,6 +241,30 @@ enum ShaderSource {
         return float2(dsdx, -dsdy);
     }
 
+    // --- 3D Curl Noise (approx using 2D slices of snoise) ---
+    float3 curl3D(float3 p, float t) {
+        float eps = 0.1;
+
+        float nX1 = snoise(p.yz + t + 0.0);
+        float nX2 = snoise(p.yz + t + 31.3);
+        float nY1 = snoise(p.zx + t + 11.7);
+        float nY2 = snoise(p.zx + t + 47.2);
+        float nZ1 = snoise(p.xy + t + 19.1);
+        float nZ2 = snoise(p.xy + t + 73.7);
+
+        float dYdz = (nY1 - nY2) / (2.0 * eps);
+        float dZdy = (nZ1 - nZ2) / (2.0 * eps);
+        float dZdx = (nZ1 - nZ2) / (2.0 * eps);
+        float dXdz = (nX1 - nX2) / (2.0 * eps);
+        float dXdy = (nX1 - nX2) / (2.0 * eps);
+        float dYdx = (nY1 - nY2) / (2.0 * eps);
+
+        float3 c = float3(dZdy - dYdz,
+                          dXdz - dZdx,
+                          dYdx - dXdy);
+        return c;
+    }
+
     vertex VSOut particleVertex(
         uint vertexId [[vertex_id]],
         constant Particle *particles [[buffer(0)]],
@@ -257,12 +325,40 @@ enum ShaderSource {
         }
         return color * in.alpha;
     }
+
+    vertex AvatarVSOut avatarVertex(
+        uint vid [[vertex_id]],
+        constant AvatarPoint *points [[buffer(0)]],
+        constant AvatarUniforms &u [[buffer(1)]]
+    ) {
+        AvatarPoint p = points[vid];
+
+        float t = clamp(u.progress, 0.0, 1.0);
+        float eased = smoothstep(0.0, 1.0, t);
+
+        float3 flow = curl3D(p.position3D * 0.5, u.time * 0.35) * u.curlStrength;
+        float3 displaced = p.position3D + flow * u.explosionStrength * eased;
+
+        float4 worldPos = float4(displaced, 1.0);
+        float4 clipPos = u.viewProjectionMatrix * worldPos;
+
+        AvatarVSOut out;
+        out.position = clipPos;
+        out.color = p.color;
+        out.pointSize = 2.0 + 3.0 * eased;
+        out.alpha = 1.0;
+        return out;
+    }
+
+    fragment float4 avatarFragment(AvatarVSOut in [[stage_in]]) {
+        return float4(in.color, in.alpha);
+    }
     """
 }
 
 // MARK: - Renderer
 
-final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
+final class ParticlePhotoRenderer: NSObject, MTKViewDelegate, ParticleAnimatable {
 
     enum AnimationDirection {
         case idle
@@ -526,9 +622,6 @@ final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        let imageAspect = CGFloat(imgWidth) / CGFloat(imgHeight)
-        let viewAspect = viewWidth / viewHeight
-
         // Aspect fill: покрыть весь экран, излишки кадра обрезаются равномерно
         let scale = max(viewWidth / CGFloat(imgWidth), viewHeight / CGFloat(imgHeight))
         let scaledWidth = CGFloat(imgWidth) * scale
@@ -573,6 +666,265 @@ final class ParticlePhotoRenderer: NSObject, MTKViewDelegate {
                                          options: [.storageModeShared])
         particleCount = particles.count
         Log.info("Particles rebuilt: \(self.particleCount)")
+    }
+}
+
+// MARK: - Avatar Renderer (3D point cloud)
+
+final class ParticleAvatarRenderer: NSObject, MTKViewDelegate, ParticleAnimatable {
+
+    enum AnimationDirection {
+        case idle
+        case forward
+        case backward
+    }
+
+    private let device: MTLDevice
+    private unowned let mtkView: MTKView
+    private let commandQueue: MTLCommandQueue
+    private var pipelineState: MTLRenderPipelineState!
+
+    private var vertexBuffer: MTLBuffer?
+    private var pointCount: Int = 0
+    private let parameters: ParticleEffectParameters
+
+    private var startTime: CFTimeInterval = CACurrentMediaTime()
+    private var animationDirection: AnimationDirection = .idle
+    private var animationStartTime: CFTimeInterval?
+    private var animationBaseProgress: Float = 0.0
+    private(set) var progress: Float = 0.0
+
+    init(device: MTLDevice, mtkView: MTKView, parameters: ParticleEffectParameters = ParticleBranding.sharedParameters) {
+        self.device = device
+        self.mtkView = mtkView
+        self.commandQueue = device.makeCommandQueue()!
+        self.parameters = parameters
+        super.init()
+        buildPipeline()
+    }
+
+    func setPoints(_ points: [GpuAvatarPoint]) {
+        guard !points.isEmpty else {
+            vertexBuffer = nil
+            pointCount = 0
+            return
+        }
+        let capped = Array(points.prefix(ParticleEffectConfig.avatarMaxPoints))
+        let length = capped.count * MemoryLayout<GpuAvatarPoint>.stride
+        vertexBuffer = device.makeBuffer(bytes: capped,
+                                         length: length,
+                                         options: [.storageModeShared])
+        pointCount = capped.count
+        progress = 0.0
+        animationDirection = .idle
+        animationStartTime = nil
+        animationBaseProgress = 0.0
+        Log.info("Avatar points set: \(pointCount)")
+    }
+
+    func toggleDirection() {
+        switch animationDirection {
+        case .idle:
+            if progress < 0.5 {
+                startExplode()
+            } else {
+                startImplode()
+            }
+        case .forward:
+            startImplode()
+        case .backward:
+            startExplode()
+        }
+    }
+
+    func startExplode() {
+        guard pointCount > 0 else { return }
+        let now = CACurrentMediaTime()
+        animationDirection = .forward
+        animationBaseProgress = progress
+        animationStartTime = now
+    }
+
+    func startImplode() {
+        guard pointCount > 0 else { return }
+        let now = CACurrentMediaTime()
+        animationDirection = .backward
+        animationBaseProgress = progress
+        animationStartTime = now
+    }
+
+    func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+
+    func draw(in view: MTKView) {
+        guard pointCount > 0 else { return }
+        guard let drawable = view.currentDrawable,
+              let renderPassDescriptor = view.currentRenderPassDescriptor else { return }
+
+        let now = CACurrentMediaTime()
+        let elapsed = Float(now - startTime)
+        updateAnimation(currentTime: now)
+
+        let aspect = Float(max(view.drawableSize.width, 1) / max(view.drawableSize.height, 1))
+        let projection = simd_float4x4.perspective(fovyRadians: .pi / 3,
+                                                   aspect: aspect,
+                                                   near: 0.05,
+                                                   far: 10.0)
+        let viewMatrix = simd_float4x4.lookAt(eye: SIMD3<Float>(0, 0, 2.2),
+                                              center: SIMD3<Float>(0, 0, 0),
+                                              up: SIMD3<Float>(0, 1, 0))
+        var uniforms = AvatarUniforms(
+            viewProjectionMatrix: projection * viewMatrix,
+            time: elapsed,
+            progress: progress,
+            curlStrength: parameters.curlStrength,
+            explosionStrength: parameters.explosionStrength
+        )
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else { return }
+        encoder.setRenderPipelineState(pipelineState)
+        if let vertexBuffer {
+            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+        }
+        encoder.setVertexBytes(&uniforms, length: MemoryLayout<AvatarUniforms>.stride, index: 1)
+        encoder.drawPrimitives(type: .point, vertexStart: 0, vertexCount: pointCount)
+        encoder.endEncoding()
+        commandBuffer.present(drawable)
+        commandBuffer.commit()
+    }
+
+    private func buildPipeline() {
+        do {
+            let library = try device.makeLibrary(source: ShaderSource.metal, options: nil)
+            let vertexFunction = library.makeFunction(name: "avatarVertex")
+            let fragmentFunction = library.makeFunction(name: "avatarFragment")
+
+            let descriptor = MTLRenderPipelineDescriptor()
+            descriptor.vertexFunction = vertexFunction
+            descriptor.fragmentFunction = fragmentFunction
+            descriptor.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+
+            pipelineState = try device.makeRenderPipelineState(descriptor: descriptor)
+        } catch {
+            fatalError("Failed to create avatar pipeline: \(error)")
+        }
+    }
+
+    private func updateAnimation(currentTime now: CFTimeInterval) {
+        guard let start = animationStartTime,
+              animationDirection != .idle else { return }
+        let elapsed = Float(now - start)
+        let duration = ParticleEffectConfig.animationDuration
+        let delta = elapsed / duration
+
+        switch animationDirection {
+        case .forward:
+            progress = min(animationBaseProgress + delta, 1.0)
+            if progress >= 1.0 {
+                animationDirection = .idle
+                animationStartTime = nil
+                animationBaseProgress = 1.0
+            }
+        case .backward:
+            progress = max(animationBaseProgress - delta, 0.0)
+            if progress <= 0.0 {
+                animationDirection = .idle
+                animationStartTime = nil
+                animationBaseProgress = 0.0
+            }
+        case .idle:
+            break
+        }
+    }
+}
+
+// MARK: - Avatar helpers
+
+enum AvatarPointCloudBuilder {
+    static func makeDemoSphere(count: Int) -> [GpuAvatarPoint] {
+        var result: [GpuAvatarPoint] = []
+        result.reserveCapacity(count)
+        for i in 0..<count {
+            let u = Float.random(in: -1...1)
+            let theta = Float.random(in: 0...(2 * .pi))
+            let r = pow(Float.random(in: 0...1), 1.0 / 3.0) // uniform in sphere
+            let x = r * sqrt(1 - u * u) * cos(theta)
+            let y = r * sqrt(1 - u * u) * sin(theta)
+            let z = r * u
+            let pos = SIMD3<Float>(x, y, z) * 0.8
+            let hue = Float(i) / Float(count)
+            let color = hsvToRGB(hue: hue, saturation: 0.65, value: 0.95)
+            result.append(GpuAvatarPoint(position3D: pos, color: color))
+        }
+        return result
+    }
+
+    private static func hsvToRGB(hue: Float, saturation: Float, value: Float) -> SIMD3<Float> {
+        let c = value * saturation
+        let x = c * (1 - abs(fmod(hue * 6, 2) - 1))
+        let m = value - c
+        let (r, g, b): (Float, Float, Float)
+        switch hue * 6 {
+        case 0..<1: (r, g, b) = (c, x, 0)
+        case 1..<2: (r, g, b) = (x, c, 0)
+        case 2..<3: (r, g, b) = (0, c, x)
+        case 3..<4: (r, g, b) = (0, x, c)
+        case 4..<5: (r, g, b) = (x, 0, c)
+        default:    (r, g, b) = (c, 0, x)
+        }
+        return SIMD3<Float>(r + m, g + m, b + m)
+    }
+}
+
+@available(iOS 17.0, *)
+final class AvatarCaptureController {
+    private var tempDir: URL?
+
+    func startCaptureSession() {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Photogrammetry-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        tempDir = dir
+    }
+
+    func addFrame(_ image: UIImage) {
+        guard let dir = tempDir else { return }
+        guard let data = image.jpegData(compressionQuality: 0.9) else { return }
+        let url = dir.appendingPathComponent("\(UUID().uuidString).jpg")
+        try? data.write(to: url)
+    }
+
+    /// Stub: реальную реконструкцию можно включить позже; сейчас просто возвращает nil.
+    func finishAndReconstruct(completion: @escaping (URL?) -> Void) {
+        completion(nil)
+    }
+}
+
+// MARK: - Matrix helpers
+
+extension simd_float4x4 {
+    static func perspective(fovyRadians: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {
+        let ys = 1 / tan(fovyRadians * 0.5)
+        let xs = ys / aspect
+        let zs = far / (far - near)
+        return simd_float4x4(SIMD4<Float>(xs, 0, 0, 0),
+                             SIMD4<Float>(0, ys, 0, 0),
+                             SIMD4<Float>(0, 0, zs, 1),
+                             SIMD4<Float>(0, 0, -near * zs, 0))
+    }
+
+    static func lookAt(eye: SIMD3<Float>, center: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
+        let z = simd_normalize(eye - center)
+        let x = simd_normalize(simd_cross(up, z))
+        let y = simd_cross(z, x)
+
+        let translation = SIMD3<Float>(-simd_dot(x, eye), -simd_dot(y, eye), -simd_dot(z, eye))
+
+        return simd_float4x4(
+            SIMD4<Float>(x.x, y.x, z.x, 0),
+            SIMD4<Float>(x.y, y.y, z.y, 0),
+            SIMD4<Float>(x.z, y.z, z.z, 0),
+            SIMD4<Float>(translation.x, translation.y, translation.z, 1)
+        )
     }
 }
 
@@ -673,8 +1025,16 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
                                                        UIImagePickerControllerDelegate,
                                                        UINavigationControllerDelegate {
 
+    private enum DemoMode {
+        case photo2D
+        case avatar3D
+    }
+
     private var mtkView: MTKView!
-    private var renderer: ParticlePhotoRenderer!
+    private var photoRenderer: ParticlePhotoRenderer!
+    private var avatarRenderer: ParticleAvatarRenderer?
+    private var activeRenderer: ParticleAnimatable?
+    private var mode: DemoMode = .photo2D
     private let parameters: ParticleEffectParameters
     private let showDebugOverlay: Bool
 
@@ -708,14 +1068,22 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
         view.addSubview(metalView)
 
         self.mtkView = metalView
-        self.renderer = ParticlePhotoRenderer(device: device, mtkView: metalView, parameters: parameters)
+        self.photoRenderer = ParticlePhotoRenderer(device: device, mtkView: metalView, parameters: parameters)
+        if #available(iOS 17.0, *) {
+            self.avatarRenderer = ParticleAvatarRenderer(device: device, mtkView: metalView, parameters: parameters)
+        } else {
+            self.avatarRenderer = nil
+        }
+
+        mtkView.delegate = photoRenderer
+        activeRenderer = photoRenderer
 
         if let image = UIImage(named: "example_photo") {
-            renderer.setImage(image)
+            photoRenderer.setImage(image)
         } else if let fallback = Self.makeGradientFallback() {
-            renderer.setImage(fallback)
+            photoRenderer.setImage(fallback)
         } else if let systemImage = UIImage(systemName: "person.fill") {
-            renderer.setImage(systemImage)
+            photoRenderer.setImage(systemImage)
         } else {
             Log.error("Failed to load any demo image")
         }
@@ -731,7 +1099,7 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
 
     // Toggle explode/implode on tap
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        renderer.toggleDirection()
+        activeRenderer?.toggleDirection()
     }
 
     private func attachDebugOverlay() {
@@ -803,7 +1171,8 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
     ) {
         let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage
         if let img = image {
-            renderer.setImage(img)
+            switchToPhotoMode()
+            photoRenderer.setImage(img)
         } else {
             Log.error("No image from picker")
         }
@@ -853,7 +1222,28 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
             self?.didTapCamera()
         })
 
-        let buttonsStack = UIStackView(arrangedSubviews: [libraryButton, cameraButton])
+        var scanButton: UIButton?
+        if #available(iOS 17.0, *) {
+            var scanConfig = UIButton.Configuration.filled()
+            scanConfig.title = "Scan 3D"
+            scanConfig.image = UIImage(systemName: "cube.transparent.fill")
+            scanConfig.baseBackgroundColor = .systemOrange
+            scanConfig.baseForegroundColor = .white
+            scanConfig.cornerStyle = .capsule
+            scanButton = UIButton(configuration: scanConfig, primaryAction: UIAction { [weak self] _ in
+                self?.didTapScanAvatar()
+            })
+        }
+
+        let buttonViews: [UIView] = {
+            if let scan = scanButton {
+                return [libraryButton, cameraButton, scan]
+            } else {
+                return [libraryButton, cameraButton]
+            }
+        }()
+
+        let buttonsStack = UIStackView(arrangedSubviews: buttonViews)
         buttonsStack.axis = .horizontal
         buttonsStack.alignment = .fill
         buttonsStack.distribution = .fillEqually
@@ -888,5 +1278,39 @@ final class ParticlePhotoDisintegrationViewController: UIViewController,
 
     @objc private func didTapCamera() {
         presentImagePicker(sourceType: .camera)
+    }
+
+    @objc private func didTapScanAvatar() {
+        guard #available(iOS 17.0, *) else {
+            showAlert(title: "Недоступно", message: "3D аватар требует iOS 17+")
+            return
+        }
+        guard let avatarRenderer else {
+            showAlert(title: "Ошибка", message: "Avatar renderer не инициализирован")
+            return
+        }
+
+        // Пока без реального скана: генерируем демо-облако точек.
+        let demoPoints = AvatarPointCloudBuilder.makeDemoSphere(count: 80_000)
+        switchToAvatarMode(with: demoPoints, renderer: avatarRenderer)
+    }
+
+    private func switchToPhotoMode() {
+        mode = .photo2D
+        mtkView.delegate = photoRenderer
+        activeRenderer = photoRenderer
+    }
+
+    private func switchToAvatarMode(with points: [GpuAvatarPoint], renderer: ParticleAvatarRenderer) {
+        renderer.setPoints(points)
+        mode = .avatar3D
+        mtkView.delegate = renderer
+        activeRenderer = renderer
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
+        present(alert, animated: true)
     }
 }
