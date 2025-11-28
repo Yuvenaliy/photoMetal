@@ -22,11 +22,14 @@ final class ParticleExperienceViewController: UIViewController,
 
     // MARK: UI
     private var metalView: MTKView!
-    private let topBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
-    private let bottomBlur = UIVisualEffectView(effect: UIBlurEffect(style: .systemThinMaterialDark))
-    private let modeSegment = UISegmentedControl(items: ["Photo", "3D Avatar"])
-    private let titleLabel = UILabel()
-    private let subtitleLabel = UILabel()
+    private let headerView = UIView()
+    private let footerView = UIView()
+    private let brandButton = UIButton(type: .system)
+    private let settingsButton = UIButton(type: .system)
+    private let modeSwitcher = UIView()
+    private let modePhotoButton = UIButton(type: .system)
+    private let modeAvatarButton = UIButton(type: .system)
+
     private let slider = UISlider()
     private let sliderValueLabel = UILabel()
     private let actionPhotoButton = UIButton(type: .system)
@@ -35,6 +38,8 @@ final class ParticleExperienceViewController: UIViewController,
     private let triggerButton = UIButton(type: .system)
     private let scanButton = UIButton(type: .system)
     private let tutorialButton = UIButton(type: .system)
+    private let photoControls = UIStackView()
+    private let avatarControls = UIStackView()
 
     // MARK: Renderers / state
     private var photoRenderer: ParticlePhotoRenderer!
@@ -93,92 +98,109 @@ final class ParticleExperienceViewController: UIViewController,
     }
 
     private func setupUI() {
-        // Top blur bar
-        topBlur.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(topBlur)
+        headerView.translatesAutoresizingMaskIntoConstraints = false
+        footerView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(headerView)
+        view.addSubview(footerView)
+
+        let headerGradient = CAGradientLayer()
+        headerGradient.colors = [UIColor.black.withAlphaComponent(0.9).cgColor,
+                                 UIColor.clear.cgColor]
+        headerGradient.startPoint = CGPoint(x: 0.5, y: 0)
+        headerGradient.endPoint = CGPoint(x: 0.5, y: 1.0)
+        headerGradient.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 140)
+        headerView.layer.addSublayer(headerGradient)
+
+        let footerGradient = CAGradientLayer()
+        footerGradient.colors = [UIColor.black.cgColor,
+                                 UIColor.black.withAlphaComponent(0.7).cgColor,
+                                 UIColor.clear.cgColor]
+        footerGradient.startPoint = CGPoint(x: 0.5, y: 1.0)
+        footerGradient.endPoint = CGPoint(x: 0.5, y: 0)
+        footerGradient.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 320)
+        footerView.layer.addSublayer(footerGradient)
+
         NSLayoutConstraint.activate([
-            topBlur.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            topBlur.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            topBlur.topAnchor.constraint(equalTo: view.topAnchor),
-            topBlur.heightAnchor.constraint(equalToConstant: 120)
+            headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            headerView.topAnchor.constraint(equalTo: view.topAnchor),
+            headerView.heightAnchor.constraint(equalToConstant: 140),
+
+            footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            footerView.heightAnchor.constraint(equalToConstant: 320)
         ])
 
-        let brandButton = UIButton(type: .system)
         brandButton.setImage(UIImage(systemName: "aperture"), for: .normal)
         brandButton.tintColor = .white
-        brandButton.translatesAutoresizingMaskIntoConstraints = false
+        settingsButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
+        settingsButton.tintColor = .white
+        [brandButton, settingsButton].forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            $0.layer.cornerRadius = 20
+            $0.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        }
 
-        modeSegment.selectedSegmentIndex = 0
-        modeSegment.translatesAutoresizingMaskIntoConstraints = false
-        modeSegment.addTarget(self, action: #selector(modeChanged), for: .valueChanged)
+        modeSwitcher.translatesAutoresizingMaskIntoConstraints = false
+        modeSwitcher.backgroundColor = UIColor(white: 1, alpha: 0.08)
+        modeSwitcher.layer.cornerRadius = 22
+        modeSwitcher.layer.borderWidth = 1
+        modeSwitcher.layer.borderColor = UIColor.white.withAlphaComponent(0.1).cgColor
 
-        let moreButton = UIButton(type: .system)
-        moreButton.setImage(UIImage(systemName: "ellipsis"), for: .normal)
-        moreButton.tintColor = .white
-        moreButton.translatesAutoresizingMaskIntoConstraints = false
+        configureModeButton(modePhotoButton, title: "Photo", isActive: true)
+        configureModeButton(modeAvatarButton, title: "3D Avatar", isActive: false)
+        modePhotoButton.addTarget(self, action: #selector(modePhotoTapped), for: .touchUpInside)
+        modeAvatarButton.addTarget(self, action: #selector(modeAvatarTapped), for: .touchUpInside)
 
-        let topStack = UIStackView(arrangedSubviews: [brandButton, modeSegment, moreButton])
-        topStack.axis = .horizontal
-        topStack.alignment = .center
-        topStack.spacing = 12
-        topStack.translatesAutoresizingMaskIntoConstraints = false
-        topBlur.contentView.addSubview(topStack)
+        let modeStack = UIStackView(arrangedSubviews: [modePhotoButton, modeAvatarButton])
+        modeStack.axis = .horizontal
+        modeStack.alignment = .fill
+        modeStack.distribution = .fillEqually
+        modeStack.spacing = 6
+        modeStack.translatesAutoresizingMaskIntoConstraints = false
+        modeSwitcher.addSubview(modeStack)
+
+        headerView.addSubview(brandButton)
+        headerView.addSubview(modeSwitcher)
+        headerView.addSubview(settingsButton)
 
         NSLayoutConstraint.activate([
-            brandButton.widthAnchor.constraint(equalToConstant: 44),
-            brandButton.heightAnchor.constraint(equalToConstant: 44),
-            moreButton.widthAnchor.constraint(equalToConstant: 44),
-            moreButton.heightAnchor.constraint(equalToConstant: 44),
-            topStack.leadingAnchor.constraint(equalTo: topBlur.contentView.leadingAnchor, constant: 16),
-            topStack.trailingAnchor.constraint(equalTo: topBlur.contentView.trailingAnchor, constant: -16),
-            topStack.bottomAnchor.constraint(equalTo: topBlur.contentView.bottomAnchor, constant: -16),
-            topStack.topAnchor.constraint(equalTo: topBlur.contentView.topAnchor, constant: 44)
-        ])
+            brandButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 16),
+            brandButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor, constant: -24),
+            brandButton.widthAnchor.constraint(equalToConstant: 40),
+            brandButton.heightAnchor.constraint(equalToConstant: 40),
 
-        // Center labels
-        titleLabel.text = "Metal Reality Kit"
-        titleLabel.font = UIFont.preferredFont(forTextStyle: .title2)
-        titleLabel.textColor = .white
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+            settingsButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -16),
+            settingsButton.centerYAnchor.constraint(equalTo: brandButton.centerYAnchor),
+            settingsButton.widthAnchor.constraint(equalToConstant: 40),
+            settingsButton.heightAnchor.constraint(equalToConstant: 40),
 
-        subtitleLabel.text = "Curl Noise • Radial Particles"
-        subtitleLabel.font = UIFont.preferredFont(forTextStyle: .subheadline)
-        subtitleLabel.textColor = .secondaryLabel
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+            modeSwitcher.centerXAnchor.constraint(equalTo: headerView.centerXAnchor),
+            modeSwitcher.centerYAnchor.constraint(equalTo: brandButton.centerYAnchor),
+            modeSwitcher.heightAnchor.constraint(equalToConstant: 44),
+            modeSwitcher.widthAnchor.constraint(equalToConstant: 220),
 
-        let centerStack = UIStackView(arrangedSubviews: [titleLabel, subtitleLabel])
-        centerStack.axis = .vertical
-        centerStack.alignment = .center
-        centerStack.spacing = 4
-        centerStack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(centerStack)
-        NSLayoutConstraint.activate([
-            centerStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            centerStack.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -80)
-        ])
-
-        // Bottom controls
-        bottomBlur.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(bottomBlur)
-        NSLayoutConstraint.activate([
-            bottomBlur.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            bottomBlur.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            bottomBlur.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            bottomBlur.heightAnchor.constraint(equalToConstant: 220)
+            modeStack.leadingAnchor.constraint(equalTo: modeSwitcher.leadingAnchor, constant: 6),
+            modeStack.trailingAnchor.constraint(equalTo: modeSwitcher.trailingAnchor, constant: -6),
+            modeStack.topAnchor.constraint(equalTo: modeSwitcher.topAnchor, constant: 4),
+            modeStack.bottomAnchor.constraint(equalTo: modeSwitcher.bottomAnchor, constant: -4)
         ])
 
         // Slider
-        slider.minimumValue = 0.5
-        slider.maximumValue = 3.0
-        slider.value = parameters.explosionStrength
+        slider.minimumValue = 0
+        slider.maximumValue = 100
+        slider.value = parameters.explosionStrength / 3.0 * 100
         slider.addTarget(self, action: #selector(sliderChanged), for: .valueChanged)
         slider.translatesAutoresizingMaskIntoConstraints = false
         sliderValueLabel.font = UIFont.monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         sliderValueLabel.textColor = .secondaryLabel
-        sliderValueLabel.text = String(format: "%.2f", slider.value)
+        sliderValueLabel.text = "\(Int(slider.value))%"
         sliderValueLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let sliderStack = UIStackView(arrangedSubviews: [UIImageView(image: UIImage(systemName: "sparkles")), slider, sliderValueLabel])
+        let sliderIcon = UIImageView(image: UIImage(systemName: "sparkles"))
+        sliderIcon.tintColor = .secondaryLabel
+        let sliderStack = UIStackView(arrangedSubviews: [sliderIcon, slider, sliderValueLabel])
         sliderStack.axis = .horizontal
         sliderStack.spacing = 12
         sliderStack.alignment = .center
@@ -244,19 +266,37 @@ final class ParticleExperienceViewController: UIViewController,
         tutorialStack.alignment = .center
         tutorialStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let bottomStack = UIStackView(arrangedSubviews: [sliderStack, actionRow, scanStack, tutorialStack])
-        bottomStack.axis = .vertical
-        bottomStack.spacing = 16
-        bottomStack.alignment = .center
-        bottomStack.translatesAutoresizingMaskIntoConstraints = false
-        bottomBlur.contentView.addSubview(bottomStack)
+        photoControls.axis = .vertical
+        photoControls.spacing = 16
+        photoControls.alignment = .center
+        photoControls.translatesAutoresizingMaskIntoConstraints = false
+        photoControls.addArrangedSubview(sliderStack)
+        photoControls.addArrangedSubview(actionRow)
+
+        avatarControls.axis = .vertical
+        avatarControls.spacing = 16
+        avatarControls.alignment = .center
+        avatarControls.translatesAutoresizingMaskIntoConstraints = false
+        avatarControls.addArrangedSubview(scanStack)
+        avatarControls.addArrangedSubview(tutorialStack)
+        avatarControls.isHidden = true
+        avatarControls.alpha = 0
+
+        footerView.addSubview(photoControls)
+        footerView.addSubview(avatarControls)
+
         NSLayoutConstraint.activate([
-            bottomStack.leadingAnchor.constraint(equalTo: bottomBlur.contentView.leadingAnchor, constant: 16),
-            bottomStack.trailingAnchor.constraint(equalTo: bottomBlur.contentView.trailingAnchor, constant: -16),
-            bottomStack.topAnchor.constraint(equalTo: bottomBlur.contentView.topAnchor, constant: 16),
-            bottomStack.bottomAnchor.constraint(equalTo: bottomBlur.contentView.bottomAnchor, constant: -16),
-            sliderStack.widthAnchor.constraint(equalTo: bottomStack.widthAnchor),
-            actionRow.widthAnchor.constraint(equalTo: bottomStack.widthAnchor, multiplier: 0.9)
+            photoControls.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 16),
+            photoControls.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -16),
+            photoControls.bottomAnchor.constraint(equalTo: footerView.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            avatarControls.leadingAnchor.constraint(equalTo: footerView.leadingAnchor, constant: 16),
+            avatarControls.trailingAnchor.constraint(equalTo: footerView.trailingAnchor, constant: -16),
+            avatarControls.bottomAnchor.constraint(equalTo: footerView.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+
+            sliderStack.widthAnchor.constraint(equalTo: photoControls.widthAnchor),
+            actionRow.widthAnchor.constraint(equalTo: photoControls.widthAnchor, multiplier: 0.95),
+            scanStack.widthAnchor.constraint(lessThanOrEqualTo: avatarControls.widthAnchor, multiplier: 0.9)
         ])
     }
 
@@ -271,19 +311,42 @@ final class ParticleExperienceViewController: UIViewController,
         button.addTarget(self, action: selector, for: .touchUpInside)
     }
 
-    // MARK: Actions
+    private func configureModeButton(_ button: UIButton, title: String, isActive: Bool) {
+        button.setTitle(title, for: .normal)
+        button.titleLabel?.font = UIFont.systemFont(ofSize: 13, weight: .semibold)
+        button.layer.cornerRadius = 18
+        button.clipsToBounds = true
+        updateModeButton(button, active: isActive)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.heightAnchor.constraint(equalToConstant: 36).isActive = true
+    }
 
-    @objc private func modeChanged() {
-        if modeSegment.selectedSegmentIndex == 0 {
-            switchToPhotoMode()
+    private func updateModeButton(_ button: UIButton, active: Bool) {
+        if active {
+            button.backgroundColor = UIColor(white: 1, alpha: 0.15)
+            button.setTitleColor(.white, for: .normal)
         } else {
-            switchToAvatarModeIfAvailable()
+            button.backgroundColor = .clear
+            button.setTitleColor(UIColor.white.withAlphaComponent(0.6), for: .normal)
         }
     }
 
+    // MARK: Actions
+
+    @objc private func modePhotoTapped() {
+        switchToPhotoMode()
+        updateModeButtons()
+    }
+
+    @objc private func modeAvatarTapped() {
+        switchToAvatarModeIfAvailable()
+        updateModeButtons()
+    }
+
     @objc private func sliderChanged() {
-        parameters.explosionStrength = slider.value
-        sliderValueLabel.text = String(format: "%.2f", slider.value)
+        let normalized = slider.value / 100.0
+        parameters.explosionStrength = max(0.1, normalized * 3.0)
+        sliderValueLabel.text = "\(Int(slider.value))%"
     }
 
     @objc private func didTapPhotos() {
@@ -335,7 +398,6 @@ final class ParticleExperienceViewController: UIViewController,
     private func switchToAvatarModeIfAvailable() {
         guard isAvatarAvailable, let avatarRenderer else {
             showAlert(title: "Недоступно", message: "3D Avatar требует iOS 17+")
-            modeSegment.selectedSegmentIndex = 0
             return
         }
         mode = .avatar3D
@@ -343,6 +405,12 @@ final class ParticleExperienceViewController: UIViewController,
         activeRenderer = avatarRenderer
         scanButton.isHidden = false
         tutorialButton.isHidden = false
+        UIView.animate(withDuration: 0.25) {
+            self.photoControls.alpha = 0
+            self.photoControls.isHidden = true
+            self.avatarControls.isHidden = false
+            self.avatarControls.alpha = 1
+        }
     }
 
     // MARK: Picker
@@ -364,7 +432,6 @@ final class ParticleExperienceViewController: UIViewController,
         if let img = image {
             switchToPhotoMode()
             photoRenderer.setImage(img)
-            modeSegment.selectedSegmentIndex = 0
         }
         picker.dismiss(animated: true)
     }
@@ -379,5 +446,30 @@ final class ParticleExperienceViewController: UIViewController,
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
+    }
+
+    private func updateModeButtons() {
+        switch mode {
+        case .photo2D:
+            updateModeButton(modePhotoButton, active: true)
+            updateModeButton(modeAvatarButton, active: false)
+            photoControls.isHidden = false
+            UIView.animate(withDuration: 0.25) {
+                self.photoControls.alpha = 1
+                self.avatarControls.alpha = 0
+            } completion: { _ in
+                self.avatarControls.isHidden = true
+            }
+        case .avatar3D:
+            updateModeButton(modePhotoButton, active: false)
+            updateModeButton(modeAvatarButton, active: true)
+            avatarControls.isHidden = false
+            UIView.animate(withDuration: 0.25) {
+                self.avatarControls.alpha = 1
+                self.photoControls.alpha = 0
+            } completion: { _ in
+                self.photoControls.isHidden = true
+            }
+        }
     }
 }

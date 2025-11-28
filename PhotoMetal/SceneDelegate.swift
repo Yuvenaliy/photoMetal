@@ -15,9 +15,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         let window = UIWindow(windowScene: windowScene)
-        // Shared parameters give the same "brand" look across screens.
-        let root = ParticlePhotoDisintegrationViewController(parameters: ParticleBranding.sharedParameters,
-                                                             showDebugOverlay: true)
+        // Запускаем UI-оболочку с отдельным контроллером.
+        let root = ParticleExperienceViewController()
         window.rootViewController = root
         self.window = window
         window.makeKeyAndVisible()
