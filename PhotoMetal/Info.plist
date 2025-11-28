@@ -19,5 +19,9 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>We use your photos to show the particle animation effect.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>We use the camera to capture photos for the particle animation effect.</string>
 </dict>
 </plist>

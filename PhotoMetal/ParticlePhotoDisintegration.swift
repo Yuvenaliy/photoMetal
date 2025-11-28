@@ -36,13 +36,13 @@ enum ParticleEffectConfig {
     static let maxParticles: Int = 400_000
 
     /// Animation duration for explode/implode.
-    static let animationDuration: Float = 2.0
+    static let animationDuration: Float = 4.0
 
     /// Shared defaults for the brand look.
     static let defaultParameters = ParticleEffectParameters(
         noiseScale: 3.0,
-        explosionStrength: 2.5,
-        radialStrength: 0.65,
+        explosionStrength: 1.2,
+        radialStrength: 0.2,
         curlStrength: 1.25,
         colorInfluence: 0.35,
         pointSize: 2.0
@@ -231,7 +231,13 @@ enum ShaderSource {
         float2 offset = (radialOffset + curlVelocity) * colorFactor;
         offset *= eased * u.explosionStrength;
 
-        float2 finalPos = base + offset;
+        float2 target = base + offset;
+        float maxAbs = max(fabs(target.x), fabs(target.y));
+        if (maxAbs > 1.02) {
+            target /= (maxAbs * 1.02);
+        }
+
+        float2 finalPos = target;
 
         VSOut out;
         out.position = float4(finalPos, 0.0, 1.0);
@@ -658,7 +664,9 @@ private extension Binding where Value == Float {
 
 // MARK: - UIViewController wrapper
 
-final class ParticlePhotoDisintegrationViewController: UIViewController {
+final class ParticlePhotoDisintegrationViewController: UIViewController,
+                                                       UIImagePickerControllerDelegate,
+                                                       UINavigationControllerDelegate {
 
     private var mtkView: MTKView!
     private var renderer: ParticlePhotoRenderer!
@@ -706,6 +714,8 @@ final class ParticlePhotoDisintegrationViewController: UIViewController {
         } else {
             Log.error("Failed to load any demo image")
         }
+
+        addSourceButtons()
 
         if showDebugOverlay {
             attachDebugOverlay()
@@ -765,5 +775,73 @@ final class ParticlePhotoDisintegrationViewController: UIViewController {
             text.draw(at: textOrigin, withAttributes: [.font: font,
                                                        .foregroundColor: UIColor.black])
         }
+    }
+
+    // MARK: - Image picking
+
+    private func presentImagePicker(sourceType: UIImagePickerController.SourceType) {
+        guard UIImagePickerController.isSourceTypeAvailable(sourceType) else {
+            Log.error("Source type \(sourceType.rawValue) not available")
+            return
+        }
+
+        let picker = UIImagePickerController()
+        picker.sourceType = sourceType
+        picker.allowsEditing = false
+        picker.delegate = self
+        present(picker, animated: true)
+    }
+
+    func imagePickerController(
+        _ picker: UIImagePickerController,
+        didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]
+    ) {
+        let image = (info[.editedImage] ?? info[.originalImage]) as? UIImage
+        if let img = image {
+            renderer.setImage(img)
+        } else {
+            Log.error("No image from picker")
+        }
+        picker.dismiss(animated: true)
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        picker.dismiss(animated: true)
+    }
+
+    // MARK: - UI
+
+    private func addSourceButtons() {
+        let libraryButton = UIButton(type: .system)
+        libraryButton.setTitle("Photos", for: .normal)
+        libraryButton.addTarget(self, action: #selector(didTapLibrary), for: .touchUpInside)
+
+        let cameraButton = UIButton(type: .system)
+        cameraButton.setTitle("Camera", for: .normal)
+        cameraButton.addTarget(self, action: #selector(didTapCamera), for: .touchUpInside)
+
+        [libraryButton, cameraButton].forEach { button in
+            button.tintColor = .white
+            button.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+            button.layer.cornerRadius = 8
+            view.addSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        NSLayoutConstraint.activate([
+            libraryButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            libraryButton.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+
+            cameraButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            cameraButton.leadingAnchor.constraint(equalTo: libraryButton.trailingAnchor, constant: 8)
+        ])
+    }
+
+    @objc private func didTapLibrary() {
+        presentImagePicker(sourceType: .photoLibrary)
+    }
+
+    @objc private func didTapCamera() {
+        presentImagePicker(sourceType: .camera)
     }
 }
