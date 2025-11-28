@@ -24,6 +24,14 @@ final class ParticleExperienceViewController: UIViewController,
     private var metalView: MTKView!
     private let headerView = UIView()
     private let footerView = UIView()
+    private let centerContainer = UIView()
+    private let photoVisual = LayoutCallbackView()
+    private let photoImageView = UIImageView()
+    private let photoHelperLabel = UILabel()
+    private let avatarVisual = UIView()
+    private let avatarDotGrid = UIStackView()
+    private let avatarTitle = UILabel()
+    private let avatarSubtitle = UILabel()
     private let brandButton = UIButton(type: .system)
     private let settingsButton = UIButton(type: .system)
     private let modeSwitcher = UIView()
@@ -40,6 +48,9 @@ final class ParticleExperienceViewController: UIViewController,
     private let tutorialButton = UIButton(type: .system)
     private let photoControls = UIStackView()
     private let avatarControls = UIStackView()
+
+    private let headerGradient = CAGradientLayer()
+    private let footerGradient = CAGradientLayer()
 
     // MARK: Renderers / state
     private var photoRenderer: ParticlePhotoRenderer!
@@ -100,36 +111,39 @@ final class ParticleExperienceViewController: UIViewController,
     private func setupUI() {
         headerView.translatesAutoresizingMaskIntoConstraints = false
         footerView.translatesAutoresizingMaskIntoConstraints = false
+        centerContainer.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(headerView)
         view.addSubview(footerView)
+        view.addSubview(centerContainer)
 
-        let headerGradient = CAGradientLayer()
         headerGradient.colors = [UIColor.black.withAlphaComponent(0.9).cgColor,
                                  UIColor.clear.cgColor]
         headerGradient.startPoint = CGPoint(x: 0.5, y: 0)
         headerGradient.endPoint = CGPoint(x: 0.5, y: 1.0)
-        headerGradient.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 140)
         headerView.layer.addSublayer(headerGradient)
 
-        let footerGradient = CAGradientLayer()
         footerGradient.colors = [UIColor.black.cgColor,
                                  UIColor.black.withAlphaComponent(0.7).cgColor,
                                  UIColor.clear.cgColor]
         footerGradient.startPoint = CGPoint(x: 0.5, y: 1.0)
         footerGradient.endPoint = CGPoint(x: 0.5, y: 0)
-        footerGradient.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: 320)
         footerView.layer.addSublayer(footerGradient)
 
         NSLayoutConstraint.activate([
             headerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             headerView.topAnchor.constraint(equalTo: view.topAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: 140),
+            headerView.heightAnchor.constraint(equalToConstant: 112),
 
             footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            footerView.heightAnchor.constraint(equalToConstant: 320)
+            footerView.heightAnchor.constraint(equalToConstant: 240),
+
+            centerContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            centerContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            centerContainer.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+            centerContainer.heightAnchor.constraint(lessThanOrEqualTo: view.heightAnchor, multiplier: 0.7)
         ])
 
         brandButton.setImage(UIImage(systemName: "aperture"), for: .normal)
@@ -185,6 +199,16 @@ final class ParticleExperienceViewController: UIViewController,
             modeStack.trailingAnchor.constraint(equalTo: modeSwitcher.trailingAnchor, constant: -6),
             modeStack.topAnchor.constraint(equalTo: modeSwitcher.topAnchor, constant: 4),
             modeStack.bottomAnchor.constraint(equalTo: modeSwitcher.bottomAnchor, constant: -4)
+        ])
+
+        // Center visuals (photo & 3D avatar)
+        setupPhotoVisual()
+        setupAvatarVisual()
+
+        NSLayoutConstraint.activate([
+            centerContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            centerContainer.widthAnchor.constraint(lessThanOrEqualToConstant: 340),
+            centerContainer.heightAnchor.constraint(equalTo: centerContainer.widthAnchor, multiplier: 4.0/3.0)
         ])
 
         // Slider
@@ -272,6 +296,7 @@ final class ParticleExperienceViewController: UIViewController,
         photoControls.translatesAutoresizingMaskIntoConstraints = false
         photoControls.addArrangedSubview(sliderStack)
         photoControls.addArrangedSubview(actionRow)
+        photoControls.setCustomSpacing(20, after: sliderStack)
 
         avatarControls.axis = .vertical
         avatarControls.spacing = 16
@@ -297,6 +322,205 @@ final class ParticleExperienceViewController: UIViewController,
             sliderStack.widthAnchor.constraint(equalTo: photoControls.widthAnchor),
             actionRow.widthAnchor.constraint(equalTo: photoControls.widthAnchor, multiplier: 0.95),
             scanStack.widthAnchor.constraint(lessThanOrEqualTo: avatarControls.widthAnchor, multiplier: 0.9)
+        ])
+    }
+
+    private func setupPhotoVisual() {
+        photoVisual.translatesAutoresizingMaskIntoConstraints = false
+        photoVisual.layer.cornerRadius = 4
+        photoVisual.clipsToBounds = true
+        photoVisual.alpha = 1
+
+        // Card background gradient & border
+        let photoBg = CAGradientLayer()
+        photoBg.colors = [UIColor(red: 0.12, green: 0.12, blue: 0.13, alpha: 1).cgColor,
+                          UIColor(red: 0.05, green: 0.05, blue: 0.06, alpha: 1).cgColor]
+        photoBg.startPoint = CGPoint(x: 0, y: 1)
+        photoBg.endPoint = CGPoint(x: 1, y: 0)
+        photoBg.frame = CGRect(origin: .zero, size: CGSize(width: 1, height: 1))
+        photoBg.cornerRadius = 4
+        photoVisual.layer.addSublayer(photoBg)
+        photoVisual.layer.borderColor = UIColor.white.withAlphaComponent(0.05).cgColor
+        photoVisual.layer.borderWidth = 1
+        photoVisual.layer.shadowColor = UIColor.black.cgColor
+        photoVisual.layer.shadowOpacity = 0.5
+        photoVisual.layer.shadowRadius = 20
+
+        photoImageView.translatesAutoresizingMaskIntoConstraints = false
+        photoImageView.contentMode = .scaleAspectFill
+        photoImageView.clipsToBounds = true
+        photoImageView.alpha = 0.9
+        if let img = UIImage(named: "example_photo") ?? UIImage(systemName: "person.fill") {
+            photoImageView.image = img
+        }
+        photoVisual.addSubview(photoImageView)
+        NSLayoutConstraint.activate([
+            photoImageView.leadingAnchor.constraint(equalTo: photoVisual.leadingAnchor),
+            photoImageView.trailingAnchor.constraint(equalTo: photoVisual.trailingAnchor),
+            photoImageView.topAnchor.constraint(equalTo: photoVisual.topAnchor),
+            photoImageView.bottomAnchor.constraint(equalTo: photoVisual.bottomAnchor)
+        ])
+
+        // Noise overlay imitation
+        let noiseOverlay = UIView()
+        noiseOverlay.translatesAutoresizingMaskIntoConstraints = false
+        noiseOverlay.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        noiseOverlay.layer.compositingFilter = "overlayBlendMode"
+        photoVisual.addSubview(noiseOverlay)
+        NSLayoutConstraint.activate([
+            noiseOverlay.leadingAnchor.constraint(equalTo: photoVisual.leadingAnchor),
+            noiseOverlay.trailingAnchor.constraint(equalTo: photoVisual.trailingAnchor),
+            noiseOverlay.topAnchor.constraint(equalTo: photoVisual.topAnchor),
+            noiseOverlay.bottomAnchor.constraint(equalTo: photoVisual.bottomAnchor)
+        ])
+
+        // Gradient overlay top/bottom
+        let topFade = CAGradientLayer()
+        topFade.colors = [UIColor.black.withAlphaComponent(0.6).cgColor,
+                          UIColor.clear.cgColor]
+        topFade.startPoint = CGPoint(x: 0.5, y: 0)
+        topFade.endPoint = CGPoint(x: 0.5, y: 1)
+        photoVisual.layer.addSublayer(topFade)
+
+        photoHelperLabel.text = "Curl Noise • Radial".uppercased()
+        photoHelperLabel.font = UIFont.systemFont(ofSize: 12, weight: .medium)
+        photoHelperLabel.textColor = UIColor.secondaryLabel
+        photoHelperLabel.textAlignment = .center
+        photoHelperLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let photoStack = UIStackView(arrangedSubviews: [photoVisual, photoHelperLabel])
+        photoStack.axis = .vertical
+        photoStack.alignment = .center
+        photoStack.spacing = 12
+        photoStack.translatesAutoresizingMaskIntoConstraints = false
+
+        centerContainer.addSubview(photoStack)
+        NSLayoutConstraint.activate([
+            photoStack.leadingAnchor.constraint(equalTo: centerContainer.leadingAnchor),
+            photoStack.trailingAnchor.constraint(equalTo: centerContainer.trailingAnchor),
+            photoStack.topAnchor.constraint(equalTo: centerContainer.topAnchor),
+            photoStack.bottomAnchor.constraint(equalTo: centerContainer.bottomAnchor),
+
+            photoVisual.widthAnchor.constraint(equalTo: photoStack.widthAnchor),
+            photoVisual.heightAnchor.constraint(equalTo: photoVisual.widthAnchor, multiplier: 4.0/3.0)
+        ])
+
+        // Keep gradient layers in sync
+        photoVisual.onLayout = { [weak photoVisual] in
+            guard let pv = photoVisual else { return }
+            photoBg.frame = pv.bounds
+            topFade.frame = pv.bounds
+        }
+    }
+
+    private func setupAvatarVisual() {
+        avatarVisual.translatesAutoresizingMaskIntoConstraints = false
+        avatarVisual.alpha = 0
+        avatarVisual.isHidden = true
+
+        let ring1 = UIView()
+        ring1.translatesAutoresizingMaskIntoConstraints = false
+        ring1.layer.cornerRadius = 120
+        ring1.layer.borderColor = UIColor.white.withAlphaComponent(0.2).cgColor
+        ring1.layer.borderWidth = 1
+
+        let ring2 = UIView()
+        ring2.translatesAutoresizingMaskIntoConstraints = false
+        ring2.layer.cornerRadius = 96
+        ring2.layer.borderColor = UIColor.white.withAlphaComponent(0.12).cgColor
+        ring2.layer.borderWidth = 1
+
+        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = 0
+        rotation.toValue = CGFloat.pi * 2
+        rotation.duration = 12
+        rotation.repeatCount = .infinity
+        ring1.layer.add(rotation, forKey: "spin")
+        let rotation2 = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation2.fromValue = 0
+        rotation2.toValue = -CGFloat.pi * 2
+        rotation2.duration = 18
+        rotation2.repeatCount = .infinity
+        ring2.layer.add(rotation2, forKey: "spin2")
+
+        // Grid of dots (6 columns x 3 rows)
+        avatarDotGrid.axis = .vertical
+        avatarDotGrid.alignment = .center
+        avatarDotGrid.spacing = 8
+        avatarDotGrid.translatesAutoresizingMaskIntoConstraints = false
+        for _ in 0..<3 {
+            let row = UIStackView()
+            row.axis = .horizontal
+            row.alignment = .center
+            row.spacing = 8
+            for _ in 0..<6 {
+                let dot = UIView()
+                dot.translatesAutoresizingMaskIntoConstraints = false
+                dot.backgroundColor = Bool.random() ? .white : UIColor.white.withAlphaComponent(0.5)
+                dot.layer.cornerRadius = 2
+                NSLayoutConstraint.activate([
+                    dot.widthAnchor.constraint(equalToConstant: 4),
+                    dot.heightAnchor.constraint(equalToConstant: 4)
+                ])
+                row.addArrangedSubview(dot)
+            }
+            avatarDotGrid.addArrangedSubview(row)
+        }
+
+        let ringsContainer = UIView()
+        ringsContainer.translatesAutoresizingMaskIntoConstraints = false
+        ringsContainer.addSubview(ring1)
+        ringsContainer.addSubview(ring2)
+        ringsContainer.addSubview(avatarDotGrid)
+
+        NSLayoutConstraint.activate([
+            ring1.centerXAnchor.constraint(equalTo: ringsContainer.centerXAnchor),
+            ring1.centerYAnchor.constraint(equalTo: ringsContainer.centerYAnchor),
+            ring1.widthAnchor.constraint(equalToConstant: 240),
+            ring1.heightAnchor.constraint(equalToConstant: 240),
+
+            ring2.centerXAnchor.constraint(equalTo: ringsContainer.centerXAnchor),
+            ring2.centerYAnchor.constraint(equalTo: ringsContainer.centerYAnchor),
+            ring2.widthAnchor.constraint(equalToConstant: 192),
+            ring2.heightAnchor.constraint(equalToConstant: 192),
+
+            avatarDotGrid.centerXAnchor.constraint(equalTo: ringsContainer.centerXAnchor),
+            avatarDotGrid.centerYAnchor.constraint(equalTo: ringsContainer.centerYAnchor)
+        ])
+
+        avatarTitle.text = "Scan 3D Avatar"
+        avatarTitle.font = UIFont.systemFont(ofSize: 20, weight: .semibold)
+        avatarTitle.textColor = .white
+        avatarTitle.textAlignment = .center
+        avatarTitle.translatesAutoresizingMaskIntoConstraints = false
+
+        avatarSubtitle.text = "Walk around an object to capture a 3D particle cloud."
+        avatarSubtitle.font = UIFont.systemFont(ofSize: 14, weight: .regular)
+        avatarSubtitle.textColor = UIColor.white.withAlphaComponent(0.6)
+        avatarSubtitle.numberOfLines = 0
+        avatarSubtitle.textAlignment = .center
+        avatarSubtitle.translatesAutoresizingMaskIntoConstraints = false
+
+        let avatarStack = UIStackView(arrangedSubviews: [ringsContainer, avatarTitle, avatarSubtitle])
+        avatarStack.axis = .vertical
+        avatarStack.alignment = .center
+        avatarStack.spacing = 12
+        avatarStack.translatesAutoresizingMaskIntoConstraints = false
+
+        centerContainer.addSubview(avatarVisual)
+        avatarVisual.addSubview(avatarStack)
+
+        NSLayoutConstraint.activate([
+            avatarVisual.leadingAnchor.constraint(equalTo: centerContainer.leadingAnchor),
+            avatarVisual.trailingAnchor.constraint(equalTo: centerContainer.trailingAnchor),
+            avatarVisual.topAnchor.constraint(equalTo: centerContainer.topAnchor),
+            avatarVisual.bottomAnchor.constraint(equalTo: centerContainer.bottomAnchor),
+
+            avatarStack.centerXAnchor.constraint(equalTo: avatarVisual.centerXAnchor),
+            avatarStack.centerYAnchor.constraint(equalTo: avatarVisual.centerYAnchor),
+
+            ringsContainer.widthAnchor.constraint(equalToConstant: 260),
+            ringsContainer.heightAnchor.constraint(equalToConstant: 260)
         ])
     }
 
@@ -386,6 +610,7 @@ final class ParticleExperienceViewController: UIViewController,
         activeRenderer = photoRenderer
         scanButton.isHidden = !isAvatarAvailable
         tutorialButton.isHidden = !isAvatarAvailable
+        toggleVisuals(showPhoto: true)
     }
 
     private var isAvatarAvailable: Bool {
@@ -405,6 +630,7 @@ final class ParticleExperienceViewController: UIViewController,
         activeRenderer = avatarRenderer
         scanButton.isHidden = false
         tutorialButton.isHidden = false
+        toggleVisuals(showPhoto: false)
         UIView.animate(withDuration: 0.25) {
             self.photoControls.alpha = 0
             self.photoControls.isHidden = true
@@ -471,5 +697,33 @@ final class ParticleExperienceViewController: UIViewController,
                 self.photoControls.isHidden = true
             }
         }
+    }
+
+    private func toggleVisuals(showPhoto: Bool) {
+        UIView.animate(withDuration: 0.3, delay: 0, options: [.curveEaseInOut]) {
+            self.photoVisual.alpha = showPhoto ? 1 : 0
+            self.photoHelperLabel.alpha = showPhoto ? 1 : 0
+            self.avatarVisual.alpha = showPhoto ? 0 : 1
+        } completion: { _ in
+            self.photoVisual.isHidden = !showPhoto
+            self.photoHelperLabel.isHidden = !showPhoto
+            self.avatarVisual.isHidden = showPhoto
+        }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        headerGradient.frame = headerView.bounds
+        footerGradient.frame = footerView.bounds
+    }
+}
+
+// MARK: - Helpers
+
+final class LayoutCallbackView: UIView {
+    var onLayout: (() -> Void)?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        onLayout?()
     }
 }
